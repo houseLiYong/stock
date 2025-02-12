@@ -197,7 +197,6 @@ def get_shanghai_index_realtime():
         return None, f"获取数据失败: {str(e)}\n错误类型: {type(e)}"
 
 def get_index_decline_records(start_date="2025-01-01"):
-    """获取指定日期至今的上证指数跌幅超过1%的记录"""
     try:
         # 获取当前时间
         current_time = datetime.now(pytz.timezone('Asia/Shanghai'))
@@ -211,46 +210,61 @@ def get_index_decline_records(start_date="2025-01-01"):
             end_date=end_date
         )
         
-        # 使用 st.expander 创建一个可展开的部分来显示调试信息
-        with st.expander("查看数据详情"):
-            st.write("=== 数据基本信息 ===")
-            st.write(f"数据形状: {hist_data.shape}")
-            
-            st.write("=== 数据列名 ===")
-            st.write(hist_data.columns.tolist())
-            
-            st.write("=== 数据类型 ===")
-            st.write(hist_data.dtypes)
-            
-            st.write("=== 前5行数据 ===")
-            st.write(hist_data.head())
-            
-            st.write("=== 后5行数据 ===")
-            st.write(hist_data.tail())
-            
-            st.write("=== 数据描述统计 ===")
-            st.write(hist_data.describe())
+        # 打印原始数据
+        with st.expander("原始数据"):
+            st.write("原始数据形状:", hist_data.shape)
+            st.write("原始数据列名:", hist_data.columns.tolist())
+            st.dataframe(hist_data, height=400, use_container_width=True)
         
-        # 确保数据按日期排序
-        hist_data = hist_data.sort_index()
+        # 确保日期列是datetime类型
+        hist_data['日期'] = pd.to_datetime(hist_data['日期'])
         
-        # 计算每日涨跌幅（使用当日收盘价与前一日收盘价计算）
+        # 计算涨跌幅
         hist_data['前日收盘'] = hist_data['收盘'].shift(1)
         hist_data['涨跌幅'] = ((hist_data['收盘'] - hist_data['前日收盘']) / hist_data['前日收盘'] * 100)
         
-        # 筛选跌幅超过1%的记录
-        decline_records = hist_data[hist_data['涨跌幅'] < -1].copy()
+        # 打印涨跌幅计算后的数据
+        with st.expander("涨跌幅计算后的数据"):
+            st.write("涨跌幅数据形状:", hist_data.shape)
+            st.write("涨跌幅范围:", f"最小值: {hist_data['涨跌幅'].min():.2f}%, 最大值: {hist_data['涨跌幅'].max():.2f}%")
+            styled_hist = hist_data.style.format({
+                '涨跌幅': '{:.2f}%',
+                '收盘': '{:.2f}',
+                '成交量': '{:.2f}',
+                '成交额': '{:.2f}'
+            }).applymap(
+                lambda x: 'color: red' if x > 0 else 'color: green' if x < 0 else '',
+                subset=['涨跌幅']
+            )
+            st.dataframe(styled_hist, height=400, use_container_width=True)
+        
+        # 筛选涨跌幅绝对值大于1%的记录
+        volatility_records = hist_data[abs(hist_data['涨跌幅']) > 1].copy()
+        
+        # 打印筛选后的数据
+        with st.expander("筛选后的数据（涨跌幅绝对值>1%）"):
+            st.write("筛选后数据形状:", volatility_records.shape)
+            styled_volatility = volatility_records.style.format({
+                '涨跌幅': '{:.2f}%',
+                '收盘': '{:.2f}',
+                '成交量': '{:.2f}',
+                '成交额': '{:.2f}'
+            }).applymap(
+                lambda x: 'color: red' if x > 0 else 'color: green' if x < 0 else '',
+                subset=['涨跌幅']
+            )
+            st.dataframe(styled_volatility, height=400, use_container_width=True)
         
         # 格式化数据
-        decline_records = decline_records.reset_index()
-        decline_records['日期'] = decline_records['日期'].dt.strftime('%Y-%m-%d')
-        decline_records['涨跌幅'] = decline_records['涨跌幅'].round(2)
-        decline_records['收盘价'] = decline_records['收盘'].round(2)
-        decline_records['成交量'] = (decline_records['成交量'] / 10000).round(2)
-        decline_records['成交额'] = (decline_records['成交额'] / 100000000).round(2)
+        volatility_records = volatility_records.reset_index(drop=True)
+        volatility_records['日期'] = volatility_records['日期'].dt.strftime('%Y-%m-%d')
+        volatility_records['涨跌幅'] = volatility_records['涨跌幅'].round(2)
+        volatility_records['收盘价'] = volatility_records['收盘'].round(2)
+        volatility_records['成交量'] = (volatility_records['成交量'] / 10000).round(2)
+        volatility_records['成交额'] = (volatility_records['成交额'] / 100000000).round(2)
         
         # 选择需要显示的列并按日期降序排序
-        result = decline_records[[
+        result = volatility_records[[
             '日期', '收盘价', '涨跌幅', '成交量', '成交额'
         ]].rename(columns={
             '成交量': '成交量(万手)',
@@ -258,12 +272,13 @@ def get_index_decline_records(start_date="2025-01-01"):
         }).sort_values('日期', ascending=False)
         
         if len(result) > 0:
-            # 计算统计信息
             stats = {
                 'count': len(result),
-                'mean': result['涨跌幅'].mean(),
-                'min': result['涨跌幅'].min(),
-                'recent': result.iloc[0]['日期'],  # 最近一次跌幅超1%的日期
+                'up_count': len(result[result['涨跌幅'] > 1]),
+                'down_count': len(result[result['涨跌幅'] < -1]),
+                'max_up': result['涨跌幅'].max(),
+                'max_down': result['涨跌幅'].min(),
+                'recent': result.iloc[0]['日期'],
                 'max_volume': result['成交量(万手)'].max()
             }
             return result, stats
@@ -271,7 +286,7 @@ def get_index_decline_records(start_date="2025-01-01"):
         return None, None
         
     except Exception as e:
-        print(f"获取跌幅记录失败: {str(e)}")
+        st.error(f"获取数据失败: {str(e)}")
         return None, None
 
 def write_changelog():
@@ -292,7 +307,71 @@ def write_changelog():
 4. 数据调试查看功能
 
 ### 关键代码结构
+
+stock/investment_app.py
+├── class InvestmentCalculator # 投资计算器类
+├── def calculate_incremental_values() # 计算涨跌幅参考值
+├── def get_shanghai_index_close() # 获取上证指数收盘数据
+├── def get_shanghai_index_realtime() # 获取上证指数实时数据
+├── def get_index_decline_records() # 获取上证指数跌幅统计
+└── def main() # 主函数
+├── 上证指数跌幅统计模块
+├── 实时监控模块
+├── 收益计算模块
+└── 涨跌幅参考表
+
+
+### 功能特点
+
+#### 1. 上证指数跌幅统计
+- 统计2025年起跌幅超过1%的交易日
+- 显示详细数据表格
+- 提供统计信息（天数、平均跌幅、最大跌幅等）
+- 包含数据调试查看功能
+
+#### 2. 实时监控功能
+- 支持开启/关闭实时监控
+- 可调整刷新间隔（5-60秒）
+- 显示实时价格、涨跌幅、成交量等
+- 涨跌幅颜色区分（红涨绿跌）
+
+#### 3. 收益计算功能
+- 支持输入初始资金和当前价值
+- 自动计算收益率和收益金额
+- 提供收益率仪表盘
+- 显示涨跌幅参考表
+
+#### 4. 数据展示优化
+- 使用 Streamlit 组件优化显示
+- 表格样式美化
+- 可展开的数据详情查看
+- 清晰的布局结构
+
+### 依赖库
+python
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime
+import pytz
+import akshare as ak
+import time
+
+### 使用说明
+1. 在终端运行：`streamlit run stock/investment_app.py`
+2. 通过左侧边栏控制实时监控
+3. 点击"查看数据详情"可以查看完整数据信息
+4. 输入初始资金和当前价值计算收益
+
+### 后续可优化方向
+1. 添加更多技术指标
+2. 优化数据刷新机制
+3. 增加历史数据分析功能
+4. 添加数据导出功能
+
 """
+
     
     try:
         # 写入 CHANGELOG.md 文件
@@ -312,27 +391,27 @@ def main():
     st.header("上证指数跌幅统计")
     st.caption("2025年1月1日至今跌幅超过1%的交易日")
     
-    decline_data, stats = get_index_decline_records()
-    if decline_data is not None and not decline_data.empty and stats is not None:
-        # 使用 styler 来设置表格样式
-        styled_df = decline_data.style.format({
+    volatility_data, stats = get_index_decline_records()
+    if volatility_data is not None and not volatility_data.empty and stats is not None:
+        # 使用 styler 来设置表格样式，根据涨跌幅设置不同颜色
+        styled_df = volatility_data.style.format({
             '涨跌幅': '{:.2f}%',
             '收盘价': '{:.2f}',
             '成交量(万手)': '{:.2f}',
             '成交额(亿)': '{:.2f}'
         }).applymap(
-            lambda x: 'color: red',
+            lambda x: 'color: red' if x > 1 else 'color: green' if x < -1 else '',
             subset=['涨跌幅']
         )
         
         # 显示统计信息
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("累计跌幅天数", f"{stats['count']}天")
+            st.metric("上涨天数(>1%)", f"{stats['up_count']}天")
         with col2:
-            st.metric("平均跌幅", f"{stats['mean']:.2f}%")
+            st.metric("下跌天数(<-1%)", f"{stats['down_count']}天")
         with col3:
-            st.metric("最大跌幅", f"{stats['min']:.2f}%")
+            st.metric("波动天数总计", f"{stats['count']}天")
         
         # 显示数据表格
         st.dataframe(
@@ -345,11 +424,13 @@ def main():
         st.info(f"""
         详细统计：
         - 统计区间：2025-01-01 至 {datetime.now().strftime('%Y-%m-%d')}
-        - 最近一次跌幅>1%日期：{stats['recent']}
+        - 最大涨幅：{stats['max_up']:.2f}%
+        - 最大跌幅：{stats['max_down']:.2f}%
+        - 最近波动日期：{stats['recent']}
         - 期间最大成交量：{stats['max_volume']:.2f}万手
         """)
     else:
-        st.warning("暂无跌幅超过1%的记录")
+        st.warning("暂无涨跌幅超过1%的记录")
 
     # 添加上证指数信息显示
     st.sidebar.header("上证指数信息")

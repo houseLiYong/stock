@@ -25,7 +25,7 @@ streamlit run investment_app.py
 - Python 3.8+
 - Streamlit 1.10+
 
-2. 运行应用：
+2. 运行应用：1
 ```bash
 streamlit run investment_app.py
 ```
