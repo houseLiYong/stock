@@ -11,6 +11,7 @@ import threading
 from functools import partial
 import time
 from snownlp import SnowNLP
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 1. 基础工具函数
 def get_stock_data_with_retry(func, *args, **kwargs):
@@ -142,41 +143,118 @@ def get_valid_stocks(stock_list):
 
 # 4. 主要处理函数
 def filter_basic_stocks():
-    """基础股票筛选 - 带缓存版"""
+    """基础股票筛选"""
     try:
-        # 获取基础数据
-        stock_list = get_basic_stock_data()
-        if stock_list is None:
-            return None
+        # 获取所有A股数据
+        stocks = get_stock_data_with_retry(
+            lambda: ak.stock_zh_a_spot_em()
+        )
+        if stocks.empty:
+            st.error("获取A股数据失败")
+            return pd.DataFrame()
             
-        st.write(f"初始股票数量: {len(stock_list)}")
+        # 打印列名和数据示例用于调试
+        st.write("股票数据列名:", list(stocks.columns))
+        st.write("数据示例:", stocks.head(1).to_dict('records'))
         
-        # 1. 快速筛选 - ST和退市
-        stock_list = stock_list[~stock_list['代码'].astype(str).str.startswith('688')]
-        stock_list = stock_list[~stock_list['名称'].str.contains('ST|退')]
-        st.write(f"排除ST后股票数量: {len(stock_list)}")
+        # 确保代码列的格式正确（使用实际的列名）
+        if '代码' in stocks.columns:
+            code_column = '代码'
+            name_column = '名称'
+        elif 'symbol' in stocks.columns:
+            code_column = 'symbol'
+            name_column = 'name'
+        else:
+            st.error("无法找到股票代码列，当前列名：" + str(list(stocks.columns)))
+            return pd.DataFrame()
         
-        # 2. 快速筛选 - 成交额
-        stock_list = stock_list[stock_list['成交额'] > 50000000]
-        st.write(f"排除低成交额后股票数量: {len(stock_list)}")
+        stocks[code_column] = stocks[code_column].astype(str).str.zfill(6)
+        st.write("原始A股数量:", len(stocks))
         
-        # 3. 获取缓存的有效股票列表
-        valid_stocks_df = get_valid_stocks(stock_list)
+        # 1. 剔除 ST 股票
+        non_st_stocks = stocks[~stocks[name_column].str.contains('ST|退')]
+        st.write(f"剔除ST股票后数量: {len(non_st_stocks)}")
         
-        if valid_stocks_df.empty:
-            st.warning("未找到符合条件的股票")
-            return None
+        # 2. 获取上市时间信息
+        @st.cache_data(ttl=3600*24)
+        def get_stock_basic_info():
+            try:
+                # 使用东方财富股票列表接口
+                basic_info = get_stock_data_with_retry(
+                    lambda: ak.stock_info_a_code_name()
+                )
+                if not basic_info.empty:
+                    st.write("基本信息列名:", list(basic_info.columns))
+                    st.write("基本信息示例:", basic_info.head(1).to_dict('records'))
+                return basic_info
+            except Exception as e:
+                st.error(f"获取基本信息失败: {str(e)}")
+                return pd.DataFrame()
             
-        st.write(f"符合上市时间要求的股票数量: {len(valid_stocks_df)}")
-        st.write("符合条件的股票列表：")
-        st.write(valid_stocks_df)
+        stock_info = get_stock_basic_info()
         
-        return valid_stocks_df
+        # 由于无法直接获取上市时间，我们暂时跳过这个筛选条件
+        st.write("暂时跳过上市时间筛选")
+        
+        # 3. 获取成交额数据
+        # 使用当日成交额数据
+        if '成交额' in stocks.columns:
+            volume_data = stocks[[code_column, '成交额']]
+            volume_data['成交额'] = volume_data['成交额'].astype(float)
+            
+            # 剔除低成交额股票（5000万）
+            active_stocks = volume_data[volume_data['成交额'] > 5000_0000][code_column]
+            non_st_stocks = non_st_stocks[non_st_stocks[code_column].isin(active_stocks)]
+            st.write(f"剔除低成交额股票后数量: {len(non_st_stocks)}")
+        else:
+            st.warning("无法获取成交额数据，跳过成交额筛选")
+        
+        # 4. 获取财务数据
+        @st.cache_data(ttl=3600*24)
+        def get_financial_data():
+            try:
+                # 使用业绩快报接口
+                financial_data = get_stock_data_with_retry(
+                    lambda: ak.stock_yjbb_em()
+                )
+                if not financial_data.empty:
+                    st.write("财务数据列名:", list(financial_data.columns))
+                    st.write("财务数据示例:", financial_data.head(1).to_dict('records'))
+                return financial_data
+            except Exception as e:
+                st.error(f"获取财务数据失败: {str(e)}")
+                return pd.DataFrame()
+            
+        financial_data = get_financial_data()
+        if not financial_data.empty:
+            # 使用实际的列名
+            if '股票代码' in financial_data.columns:
+                fin_code_column = '股票代码'
+                profit_column = '净利润'
+                if '净利润-净利润' in financial_data.columns:
+                    profit_column = '净利润-净利润'
+                elif '净利润同比' in financial_data.columns:
+                    profit_column = '净利润同比'
+            else:
+                st.warning("无法找到财务数据列，跳过财务筛选")
+                st.write("当前列名：" + str(list(financial_data.columns)))
+                financial_data = pd.DataFrame()
+        
+        if not financial_data.empty:
+            financial_data[fin_code_column] = financial_data[fin_code_column].astype(str).str.zfill(6)
+            financial_data[profit_column] = financial_data[profit_column].astype(float)
+            
+            # 获取盈利的公司
+            profitable_stocks = financial_data[financial_data[profit_column] > 0][fin_code_column]
+            non_st_stocks = non_st_stocks[non_st_stocks[code_column].isin(profitable_stocks)]
+            st.write(f"剔除亏损股票后数量: {len(non_st_stocks)}")
+        
+        return non_st_stocks
         
     except Exception as e:
-        st.error(f"基础筛选失败: {str(e)}")
+        st.error(f"基础筛选发生错误: {str(e)}")
         st.write("错误详情:", traceback.format_exc())
-        return None
+        return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_cached_sectors():
@@ -378,49 +456,109 @@ def get_sector_stocks(sector_name):
         st.error(f"获取板块成分股数据失败: {str(e)}")
         return pd.DataFrame()
 
+def analyze_stock(stock, code_column='代码', name_column='名称'):
+    """分析单个股票"""
+    try:
+        code = stock[code_column]
+        
+        # 使用缓存的技术指标分析结果
+        @st.cache_data(ttl=1800)  # 30分钟缓存
+        def cached_technical_analysis(stock_code):
+            return filter_technical_indicators(stock_code)
+            
+        if cached_technical_analysis(code):
+            return {
+                '代码': code,
+                '名称': stock[name_column],
+                '现价': stock.get('最新价', 0),
+                '涨跌幅': stock.get('涨跌幅', 0)
+            }
+    except Exception as e:
+        st.warning(f"分析股票 {code} 时出错: {str(e)}")
+    return None
+
 def select_stocks(base_stocks=None):
     """基于技术指标的选股策略"""
     try:
-        if base_stocks is None:
-            # 获取所有A股数据
-            base_stocks = get_stock_data_with_retry(
-                lambda: ak.stock_zh_a_spot_em()
-            )
-            if base_stocks.empty:
-                st.error("获取A股数据失败")
-                return []
-                
-            # 确保代码列的格式正确
-            base_stocks['代码'] = base_stocks['代码'].astype(str).str.zfill(6)
-            st.write("获取到A股数量:", len(base_stocks))
-        
+        # 获取并筛选基础股票池
+        filtered_stocks = filter_basic_stocks()
+        if filtered_stocks.empty:
+            st.error("基础筛选未获取到符合条件的股票")
+            return pd.DataFrame()
+            
         st.write("开始技术指标分析...")
         progress_container = st.empty()
+        progress_bar = st.progress(0)
         
         selected_stocks = []
-        total_stocks = len(base_stocks)
+        total_stocks = len(filtered_stocks)
+        processed_count = 0
         
-        for i, (_, stock) in enumerate(base_stocks.iterrows()):
-            code = stock['代码']
-            progress_container.text(f"正在分析 {code} ({i+1}/{total_stocks})")
+        # 创建线程池
+        max_workers = min(32, total_stocks)  # 最多32个线程
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_stock = {
+                executor.submit(
+                    analyze_stock, 
+                    stock,
+                    code_column='代码' if '代码' in filtered_stocks.columns else 'symbol',
+                    name_column='名称' if '名称' in filtered_stocks.columns else 'name'
+                ): stock 
+                for _, stock in filtered_stocks.iterrows()
+            }
             
-            # 技术指标筛选
-            if filter_technical_indicators(code):
-                selected_stocks.append({
-                    '代码': code,
-                    '名称': stock['名称'],
-                    '现价': stock.get('最新价', 0),
-                    '涨跌幅': stock.get('涨跌幅', 0)
-                })
+            # 处理完成的任务
+            start_time = time.time()
+            for future in as_completed(future_to_stock):
+                processed_count += 1
                 
+                # 更新进度
+                progress = processed_count / total_stocks
+                progress_bar.progress(progress)
+                
+                # 计算预估剩余时间
+                elapsed_time = time.time() - start_time
+                estimated_total_time = elapsed_time / progress if progress > 0 else 0
+                remaining_time = estimated_total_time - elapsed_time
+                
+                # 更新进度信息
+                progress_container.text(
+                    f"已处理: {processed_count}/{total_stocks} "
+                    f"预计剩余时间: {remaining_time:.1f}秒"
+                )
+                
+                # 获取分析结果
+                result = future.result()
+                if result:
+                    selected_stocks.append(result)
+        
+        # 清理进度显示
         progress_container.empty()
+        progress_bar.empty()
         
         if selected_stocks:
             st.write("选股结果：")
             result_df = pd.DataFrame(selected_stocks)
             # 按涨跌幅排序
             result_df = result_df.sort_values('涨跌幅', ascending=False)
+            
+            # 缓存选股结果
+            @st.cache_data(ttl=1800)  # 30分钟缓存
+            def cache_selected_stocks(df):
+                return df
+                
+            result_df = cache_selected_stocks(result_df)
             st.write(result_df)
+            
+            # 显示选股统计
+            st.write(f"""
+            ### 选股统计
+            - 基础股票池数量: {total_stocks}
+            - 符合条件数量: {len(selected_stocks)}
+            - 选股比例: {len(selected_stocks)/total_stocks*100:.2f}%
+            """)
+            
             return result_df
         else:
             st.warning("未找到符合条件的股票")
@@ -438,14 +576,33 @@ def main():
     # 添加策略说明
     st.markdown("""
     ### 策略说明
-    1. MACD金叉
-    2. KDJ超卖区
-    3. 均线多头排列
+    1. 基础筛选
+       - 剔除ST股票
+       - 剔除低成交额股票
+       - 剔除亏损股票
+       
+    2. 技术指标
+       - MACD金叉
+       - KDJ超卖区
+       - 均线多头排列
     """)
     
-    if st.button("开始选股"):
-        with st.spinner("正在执行选股策略..."):
-            select_stocks()
+    # 添加缓存控制
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("清除缓存"):
+            st.cache_data.clear()
+            st.success("缓存已清除")
+    
+    with col2:
+        if st.button("开始选股"):
+            with st.spinner("正在执行选股策略..."):
+                start_time = time.time()
+                result = select_stocks()
+                end_time = time.time()
+                
+                if not result.empty:
+                    st.success(f"选股完成！用时: {end_time - start_time:.1f}秒")
     
     # 添加策略详情说明
     with st.expander("查看策略详情"):
