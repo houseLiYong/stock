@@ -4,3 +4,4 @@ numpy
 plotly
 akshare
 pytz
+scikit-learn

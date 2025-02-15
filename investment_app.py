@@ -1,11 +1,14 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, time as datetime_time
 import akshare as ak
 import pytz
 import time
 import os
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.source_util import get_pages
 
 
 class InvestmentCalculator:
@@ -506,6 +509,12 @@ def main():
                     st.success(f"版本记录已成功生成：\n{message}")
                 else:
                     st.error(f"生成版本记录失败：{message}")
+            
+            # 添加策略链接
+            st.markdown("### 量化策略")
+            st.markdown("[📊 机器学习量化策略](/quant_backtest)")
+            st.markdown("[🔥 热点事件驱动策略](/event_driven_strategy)")
+            
 
         # 创建计算器实例
         calculator = InvestmentCalculator(initial_capital)
