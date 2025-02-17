@@ -512,9 +512,7 @@ def main():
             
             # 添加策略链接
             st.markdown("### 量化策略")
-            st.markdown("[📊 机器学习量化策略](/quant_backtest)")
-            st.markdown("[🔥 热点事件驱动策略](/event_driven_strategy)")
-            
+           
 
         # 创建计算器实例
         calculator = InvestmentCalculator(initial_capital)
