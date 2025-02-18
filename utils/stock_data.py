@@ -75,8 +75,9 @@ def get_stock_list():
             '换手率': '换手率',
             '成交额': '成交额'
         })
-        st.write(f"获取到实时行情数量: {len(latest_quotes)}")
         
+        st.write(f"获取到实时行情数量: {len(latest_quotes)}")
+        st.dataframe(latest_quotes)
         # 清空队列
         while not progress_queue.empty():
             progress_queue.get()

@@ -16,48 +16,132 @@ from stock.utils.technical_analysis import (
     calculate_macd,
     calculate_volume_change
 )
+from plotly.subplots import make_subplots
 
 def plot_stock_chart(stock_code, stock_data):
     """绘制股票图表"""
     try:
-        # 创建蜡烛图
-        candlestick = go.Candlestick(
-            x=stock_data.index,
-            open=stock_data['开盘'],
-            high=stock_data['最高'],
-            low=stock_data['最低'],
-            close=stock_data['收盘'],
-            name='K线'
+         # 确保日期列是正确的datetime类型
+        stock_data = stock_data.copy()  # 创建副本避免修改原始数据
+        stock_data['日期'] = pd.to_datetime(stock_data['日期'], format='%Y-%m-%d')
+        stock_data.set_index('日期', inplace=True)
+        
+    
+        # 创建子图
+        fig = make_subplots(
+            rows=2, cols=1,  # 2行1列的布局
+            shared_xaxes=True,  # 共享X轴
+            vertical_spacing=0.05,  # 垂直间距
+            row_heights=[0.7, 0.3],  # K线图占70%，成交量占30%
+            subplot_titles=(f'{stock_code} K线图', '成交量')
         )
         
-        # 计算MA5
-        ma5 = stock_data['收盘'].rolling(window=5).mean()
-        ma_line = go.Scatter(
-            x=stock_data.index,
-            y=ma5,
-            name='MA5',
-            line=dict(color='blue')
+        # 添加K线图
+        fig.add_trace(
+            go.Candlestick(
+                x=stock_data.index,
+                open=stock_data['开盘'],
+                high=stock_data['最高'],
+                low=stock_data['最低'],
+                close=stock_data['收盘'],
+                name='K线'
+            ),
+            row=1, col=1
         )
         
-        # 创建成交量图
-        volume_bar = go.Bar(
-            x=stock_data.index,
-            y=stock_data['成交量'],
-            name='成交量',
-            yaxis='y2'
+        # 添加MA5
+        fig.add_trace(
+            go.Scatter(
+                x=stock_data.index,
+                y=stock_data['收盘'].rolling(window=5).mean(),
+                name='MA5',
+                line=dict(color='blue', width=1)
+            ),
+            row=1, col=1
         )
         
-        # 设置布局
-        layout = go.Layout(
+        # 添加成交量图
+        colors = ['red' if row['收盘'] >= row['开盘'] else 'green' 
+                 for _, row in stock_data.iterrows()]
+        
+        fig.add_trace(
+            go.Bar(
+                x=stock_data.index,
+                y=stock_data['成交量'],
+                name='成交量',
+                marker_color=colors
+            ),
+            row=2, col=1
+        )
+        
+        # 更新布局
+        fig.update_layout(
             title=f'{stock_code} 行情图',
-            yaxis=dict(title='价格'),
-            yaxis2=dict(title='成交量', overlaying='y', side='right'),
-            xaxis=dict(title='日期'),
-            height=600
+            height=800,  # 增加总高度
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            xaxis_rangeslider_visible=False  # 禁用rangeslider
         )
         
-        # 组合图表
-        fig = go.Figure(data=[candlestick, ma_line, volume_bar], layout=layout)
+        # 更新X轴
+        fig.update_xaxes(
+            title='日期',
+            type='date',
+            tickformat='%Y-%m-%d',
+            tickangle=-45,
+            tickmode='auto',
+            nticks=10,
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='lightgrey'
+        )
+        
+        # 更新K线图Y轴
+        fig.update_yaxes(
+            title='价格',
+            tickformat='.2f',
+            row=1, col=1,
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='lightgrey'
+        )
+        
+        # 更新成交量Y轴
+        fig.update_yaxes(
+            title='成交量',
+            tickformat='.0f',
+            row=2, col=1,
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='lightgrey'
+        )
+        
+        # 添加交互功能
+        fig.update_layout(
+            hovermode='x unified',
+            hoverdistance=100,
+            spikedistance=1000,
+        )
+        
+        fig.update_xaxes(
+            showspikes=True,
+            spikesnap="cursor",
+            spikemode="across",
+            spikethickness=1,
+        )
+        
+        fig.update_yaxes(
+            showspikes=True,
+            spikesnap="cursor",
+            spikemode="across",
+            spikethickness=1,
+        )
         return fig
         
     except Exception as e:
@@ -130,7 +214,7 @@ def ma5_strategy():
         4. 成交量显著放大
         5. MACD金叉且柱状图由负转正
         """)
-    
+
     # 创建选股按钮
     if st.button("开始选股"):
         with st.spinner("正在进行选股分析..."):
@@ -153,13 +237,20 @@ def ma5_strategy():
                     hide_index=True
                 )
                 
+                st.dataframe(result_df)
                 # 创建股票选择器
                 selected_stock = st.selectbox(
                     "选择要查看的股票",
                     options=result_df['代码'].tolist(),
                     format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}"
                 )
-                
+                # 确保选中的代码仍然存在于 result_df
+                if selected_stock in result_df['代码'].values:
+                    stock_name = result_df.loc[result_df['代码'] == selected_stock, '名称'].values[0]
+                    st.write(f"你选择的股票是：{selected_stock} - {stock_name}")
+                else:
+                    st.warning("选中的股票已不存在，请重新选择！")
+                print("股票代码",selected_stock)
                 if selected_stock:
                     # 获取股票数据
                     stock_data = get_stock_data(selected_stock)
