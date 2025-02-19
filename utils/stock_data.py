@@ -15,70 +15,89 @@ from functools import wraps
 progress_queue = Queue()
 selected_stocks_queue = Queue()
 
-# 尝试导入retrying，如果不存在则使用自定义的重试装饰器
-try:
-    from retrying import retry
-except ImportError:
-    # 自定义重试装饰器
-    def retry(stop_max_attempt_number=3, wait_fixed=2000):
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                max_attempts = stop_max_attempt_number
-                wait_time = wait_fixed / 1000  # 转换为秒
-                
-                for attempt in range(max_attempts):
-                    try:
-                        return func(*args, **kwargs)
-                    except Exception as e:
-                        if attempt == max_attempts - 1:  # 最后一次尝试
-                            raise e
-                        time.sleep(wait_time)
-                return None
-            return wrapper
-        return decorator
+# 自定义重试装饰器
+def retry(stop_max_attempt_number=3, 
+         wait_fixed=2000, 
+         wait_exponential_multiplier=None, 
+         wait_exponential_max=None,
+         retry_on_exception=None):
+    """
+    自定义重试装饰器
+    :param stop_max_attempt_number: 最大重试次数
+    :param wait_fixed: 固定等待时间（毫秒）
+    :param wait_exponential_multiplier: 指数退避乘数（毫秒）
+    :param wait_exponential_max: 最大等待时间（毫秒）
+    :param retry_on_exception: 需要重试的异常类型
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            max_attempts = stop_max_attempt_number
+            
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # 检查是否是需要重试的异常类型
+                    if retry_on_exception and not retry_on_exception(e):
+                        raise e
+                        
+                    if attempt == max_attempts - 1:  # 最后一次尝试
+                        raise e
+                        
+                    # 计算等待时间
+                    if wait_exponential_multiplier:
+                        wait_time = min(
+                            wait_exponential_multiplier * (2 ** attempt),
+                            wait_exponential_max or float('inf')
+                        ) / 1000  # 转换为秒
+                    else:
+                        wait_time = wait_fixed / 1000
+                        
+                    time.sleep(wait_time)
+                    
+            return None
+        return wrapper
+    return decorator
 
 def should_retry(exception):
     """判断是否需要重试的条件"""
     retry_exceptions = (
         ConnectionError,
-        RequestException,
-        Timeout,
-        ProtocolError,
-        ConnectionResetError
+        TimeoutError,
+        Exception  # 临时添加，用于处理所有异常
     )
     return isinstance(exception, retry_exceptions)
 
 @retry(
-    stop_max_attempt_number=5,  # 最大重试次数
-    wait_exponential_multiplier=1000,  # 初始等待时间（毫秒）
-    wait_exponential_max=10000,  # 最大等待时间（毫秒）
+    stop_max_attempt_number=5,
+    wait_exponential_multiplier=1000,
+    wait_exponential_max=10000,
     retry_on_exception=should_retry
 )
 def get_stock_data(stock_code, days=30):
-    """获取股票历史数据（带重试机制）"""
+    """获取股票历史数据"""
     try:
         stock_code = stock_code.strip()
-        
-        # 随机延时0.5-2秒，避免请求过快
+        # 随机延时0.5-2秒
         time.sleep(random.uniform(0.5, 2))
         
         df = ak.stock_zh_a_hist(
             symbol=stock_code, 
             period="daily", 
             adjust="qfq",
-            timeout=30  # 增加超时时间
+            timeout=30
         )
         
         if df is None or df.empty:
-            print(f"无法获取股票 {stock_code} 的数据")
+            st.warning(f"无法获取股票 {stock_code} 的数据")
             return None
             
         return df.tail(days)
         
     except Exception as e:
-        print(f"获取股票 {stock_code} 数据时发生错误: {str(e)}")
-        raise  # 抛出异常以触发重试
+        st.error(f"获取股票 {stock_code} 数据时发生错误: {str(e)}")
+        raise
 
 @retry(
     stop_max_attempt_number=5,
@@ -156,9 +175,29 @@ def update_progress():
 
 def get_stock_list():
     """获取A股股票列表并进行策略筛选"""
+    @retry(
+        stop_max_attempt_number=5,
+        wait_exponential_multiplier=1000,
+        wait_exponential_max=10000,
+        retry_on_exception=should_retry
+    )
+    def _get_stock_info():
+        time.sleep(random.uniform(0.5, 2))
+        return ak.stock_info_a_code_name()
+        
+    @retry(
+        stop_max_attempt_number=5,
+        wait_exponential_multiplier=1000,
+        wait_exponential_max=10000,
+        retry_on_exception=should_retry
+    )
+    def _get_realtime_quotes():
+        time.sleep(random.uniform(0.5, 2))
+        return ak.stock_zh_a_spot_em()
+    
     try:
         # 获取所有A股信息（带重试）
-        stock_info = get_stock_list_with_retry()
+        stock_info = _get_stock_info()
         stock_info.columns = ['代码', '名称']
         st.write(f"获取到总股票数量: {len(stock_info)}")
         
@@ -167,7 +206,7 @@ def get_stock_list():
         st.write(f"排除ST后股票数量: {len(non_st_stocks)}")
         
         # 获取实时行情数据（带重试）
-        latest_quotes = get_realtime_quotes_with_retry()
+        latest_quotes = _get_realtime_quotes()
         latest_quotes = latest_quotes.rename(columns={
             '代码': '代码',
             '名称': '名称',
