@@ -9,11 +9,34 @@ from queue import Queue
 from requests.exceptions import RequestException, ConnectionError, Timeout
 from urllib3.exceptions import ProtocolError
 import random
-from retrying import retry
+from functools import wraps
 
 # 创建一个线程安全的队列来存储进度信息
 progress_queue = Queue()
 selected_stocks_queue = Queue()
+
+# 尝试导入retrying，如果不存在则使用自定义的重试装饰器
+try:
+    from retrying import retry
+except ImportError:
+    # 自定义重试装饰器
+    def retry(stop_max_attempt_number=3, wait_fixed=2000):
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                max_attempts = stop_max_attempt_number
+                wait_time = wait_fixed / 1000  # 转换为秒
+                
+                for attempt in range(max_attempts):
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as e:
+                        if attempt == max_attempts - 1:  # 最后一次尝试
+                            raise e
+                        time.sleep(wait_time)
+                return None
+            return wrapper
+        return decorator
 
 def should_retry(exception):
     """判断是否需要重试的条件"""
