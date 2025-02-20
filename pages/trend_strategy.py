@@ -132,6 +132,40 @@ def plot_trend_chart(stock_code, stock_data):
         st.error(f"绘制图表时发生错误: {str(e)}")
         return None
 
+def select_boards():
+    """处理板块选择逻辑"""
+    with st.sidebar:
+        st.header("板块选择")
+        st.write("请选择要分析的板块：")
+        
+        # 预定义的板块列表
+        all_boards = [
+            '上证主板',
+            '深证主板',
+            '创业板',
+            '科创板',
+            '北交所'
+        ]
+        
+        # 使用 checkbox 代替 multiselect，更适合侧边栏
+        selected_boards = []
+        for board in all_boards:
+            if st.checkbox(board, value=True if board in ['上证主板', '创业板', '科创板'] else False, key=f"trend_{board}"):
+                selected_boards.append(board)
+        
+        # 显示已选板块数量
+        if selected_boards:
+            st.success(f"已选择 {len(selected_boards)} 个板块")
+        else:
+            st.warning("请至少选择一个板块")
+        
+        # 添加刷新按钮
+        if st.button("刷新数据", key="trend_refresh_data"):
+            st.cache_data.clear()
+            st.rerun()  # 使用 st.rerun() 替代 st.experimental_rerun()
+            
+        return selected_boards
+
 def trend_strategy():
     """趋势跟踪策略页面"""
     st.title("趋势跟踪策略")
@@ -140,10 +174,13 @@ def trend_strategy():
     with st.expander("策略说明"):
         st.markdown(get_trend_description())
     
+    # 获取选择的板块
+    selected_boards = select_boards()
+    
     # 创建选股按钮
-    if st.button("开始选股"):
+    if selected_boards and st.button("开始选股", key="trend_start_analysis"):
         with st.spinner("正在进行趋势分析..."):
-            result_df = get_stock_list()
+            result_df = get_stock_list(selected_boards)  # 传入选择的板块
             
             if result_df is not None and not result_df.empty:
                 # 显示选股结果
@@ -153,6 +190,7 @@ def trend_strategy():
                     column_config={
                         "代码": st.column_config.TextColumn("代码"),
                         "名称": st.column_config.TextColumn("名称"),
+                        "板块": st.column_config.TextColumn("板块"),
                         "现价": st.column_config.NumberColumn("现价", format="%.2f"),
                         "涨跌幅": st.column_config.NumberColumn("涨跌幅", format="%.2f%%"),
                         "换手率": st.column_config.NumberColumn("换手率", format="%.2f%%"),
@@ -165,7 +203,8 @@ def trend_strategy():
                 selected_stock = st.selectbox(
                     "选择要查看的股票",
                     options=result_df['代码'].tolist(),
-                    format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}"
+                    format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}",
+                    key="trend_stock_selector"
                 )
                 
                 if selected_stock:

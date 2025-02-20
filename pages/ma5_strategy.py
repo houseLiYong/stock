@@ -197,28 +197,88 @@ def plot_technical_indicators(stock_data):
     except Exception as e:
         return f"绘制技术指标时发生错误: {str(e)}"
 
-def ma5_strategy():
-    """五日线斜率策略页面"""
-    st.title("五日线斜率转正策略")
-    
-    # 添加策略说明
-    with st.expander("策略说明"):
-        st.write("""
-        ### 策略概述
-        本策略通过五日线斜率由负转正的信号，结合其他技术指标，筛选具有潜在上涨动能的股票。
+def select_boards():
+    """处理板块选择逻辑"""
+    with st.sidebar:
+        st.header("板块选择")
+        st.write("请选择要分析的板块：")
         
-        ### 选股条件
-        1. 排除ST股票
-        2. 五日线斜率由负转正
-        3. RSI在30-70之间
-        4. 成交量显著放大
-        5. MACD金叉且柱状图由负转正
-        """)
+        # 预定义的板块列表
+        all_boards = [
+            '上证主板',
+            '深证主板',
+            '创业板',
+            '科创板',
+            '北交所'
+        ]
+        
+        # 使用 checkbox 代替 multiselect，更适合侧边栏
+        selected_boards = []
+        for board in all_boards:
+            if st.checkbox(board, value=True if board in ['上证主板', '创业板', '科创板'] else False, key=f"ma5_{board}"):
+                selected_boards.append(board)
+        
+        # 显示已选板块数量
+        if selected_boards:
+            st.success(f"已选择 {len(selected_boards)} 个板块")
+        else:
+            st.warning("请至少选择一个板块")
+        
+        # 添加刷新按钮
+        if st.button("刷新数据", key="ma5_refresh_data"):
+            st.cache_data.clear()
+            st.rerun()  # 使用 st.rerun() 替代 st.experimental_rerun()
+            
+        return selected_boards
 
+def ma5_strategy():
+    """MA5策略页面"""
+    # 首先获取选择的板块
+    selected_boards = select_boards()
+    
+    # 然后显示主页面内容
+    st.title("MA5均线策略")
+    
+    # 显示策略说明
+    with st.expander("策略说明"):
+        st.markdown("""
+        ### MA5均线策略
+        
+        #### 策略概述
+        本策略基于5日均线（MA5）的变化趋势进行选股，主要关注均线的斜率变化和价格位置。
+        
+        #### 核心指标
+        1. MA5斜率
+           - 计算最近5日MA5的斜率
+           - 判断趋势方向和强度
+        
+        2. 价格位置
+           - 相对MA5的位置
+           - 突破确认
+        
+        3. 成交量
+           - 对比5日平均成交量
+           - 关注量能配合
+        
+        #### 买入条件
+        - MA5斜率为正且增大
+        - 价格站上MA5
+        - 成交量放大
+        
+        #### 风险控制
+        - 排除ST股票
+        - 考虑流动性因素
+        - 设置止损位置
+        """)
+    
     # 创建选股按钮
-    if st.button("开始选股"):
-        with st.spinner("正在进行选股分析..."):
-            result_df = get_stock_list()
+    if st.button("开始选股", key="ma5_start_analysis"):
+        if not selected_boards:
+            st.warning("请先在左侧边栏选择至少一个板块")
+            return
+            
+        with st.spinner("正在进行MA5策略分析..."):
+            result_df = get_stock_list(selected_boards)
             
             if result_df is not None and not result_df.empty:
                 # 显示选股结果
@@ -228,81 +288,40 @@ def ma5_strategy():
                     column_config={
                         "代码": st.column_config.TextColumn("代码"),
                         "名称": st.column_config.TextColumn("名称"),
+                        "板块": st.column_config.TextColumn("板块"),
                         "现价": st.column_config.NumberColumn("现价", format="%.2f"),
                         "涨跌幅": st.column_config.NumberColumn("涨跌幅", format="%.2f%%"),
                         "换手率": st.column_config.NumberColumn("换手率", format="%.2f%%"),
                         "成交额": st.column_config.NumberColumn("成交额", format="%.2f亿"),
                         "选股理由": st.column_config.TextColumn("选股理由"),
-                    },
-                    hide_index=True
+                    }
                 )
                 
-                st.dataframe(result_df)
                 # 创建股票选择器
                 selected_stock = st.selectbox(
                     "选择要查看的股票",
                     options=result_df['代码'].tolist(),
-                    format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}"
+                    format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}",
+                    key="ma5_stock_selector"
                 )
-                # 确保选中的代码仍然存在于 result_df
-                if selected_stock in result_df['代码'].values:
-                    stock_name = result_df.loc[result_df['代码'] == selected_stock, '名称'].values[0]
-                    st.write(f"你选择的股票是：{selected_stock} - {stock_name}")
-                else:
-                    st.warning("选中的股票已不存在，请重新选择！")
-                print("股票代码",selected_stock)
+                
                 if selected_stock:
-                    # 获取股票数据
                     stock_data = get_stock_data(selected_stock)
-                    
                     if stock_data is not None:
-                        # 显示K线图
-                        st.plotly_chart(plot_stock_chart(selected_stock, stock_data))
-                        
-                        # 显示技术指标
-                        st.plotly_chart(plot_technical_indicators(stock_data))
-                        
-                        # 显示详细分析
-                        st.write("### 技术指标分析")
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.write("MA5斜率分析")
-                            slope = calculate_ma5_slope(stock_data['收盘'])
-                            st.write(f"当前斜率: {slope:.4f}")
+                        # 显示MA5分析图表
+                        fig = plot_stock_chart(selected_stock, stock_data)
+                        if fig:
+                            st.plotly_chart(fig)
                             
-                            st.write("RSI分析")
-                            rsi = calculate_rsi(stock_data['收盘']).iloc[-1]
-                            st.write(f"当前RSI: {rsi:.2f}")
+                        # 显示MA5斜率分析
+                        slope = calculate_ma5_slope(stock_data)
+                        st.write("### MA5斜率分析")
+                        st.write(f"当前MA5斜率: {slope:.4f}")
                         
-                        with col2:
-                            st.write("成交量分析")
-                            volume_change = calculate_volume_change(stock_data['成交量'])
-                            st.write(f"成交量变化率: {volume_change:.2%}")
-                            
-                            st.write("MACD分析")
-                            macd_data = calculate_macd(stock_data['收盘'])
-                            st.write(f"DIF: {macd_data['DIF'].iloc[-1]:.4f}")
-                            st.write(f"DEA: {macd_data['DEA'].iloc[-1]:.4f}")
-                            st.write(f"MACD: {macd_data['MACD'].iloc[-1]:.4f}")
-            else:
-                st.warning("未找到符合条件的股票")
-    
-    # 显示策略统计信息
-    if 'result_df' in locals() and result_df is not None and not result_df.empty:
-        try:
-            st.write(f"""
-            ### 策略统计
-            - 符合条件股票数量: {len(result_df)}
-            - 平均涨跌幅: {result_df['涨跌幅'].mean():.2f}%
-            - 平均换手率: {result_df['换手率'].mean():.2f}%
-            """)
-        except Exception as e:
-            st.error(f"计算统计信息时发生错误: {str(e)}")
-            st.write(f"""
-            ### 策略统计
-            - 符合条件股票数量: {len(result_df)}
-            """)
+                        if slope > 0:
+                            st.success("MA5斜率为正，趋势向上")
+                        else:
+                            st.warning("MA5斜率为负，趋势向下")
 
 if __name__ == "__main__":
     ma5_strategy() 

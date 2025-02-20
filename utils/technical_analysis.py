@@ -1,21 +1,38 @@
 import numpy as np
 import pandas as pd
+import streamlit as st
 from scipy import stats
 
-def calculate_ma5_slope(prices):
-    """计算5日均线斜率"""
-    if len(prices) < 5:
-        return None
+def calculate_ma5_slope(stock_data):
+    """计算MA5斜率"""
+    try:
+        if stock_data is None or len(stock_data) < 5:
+            return 0
+            
+        # 确保收盘价是数值类型
+        prices = pd.to_numeric(stock_data['收盘'], errors='coerce')
         
-    # 计算5日移动平均线
-    ma5 = prices.rolling(window=5).mean()
-    
-    # 对最近5天的MA5进行线性回归
-    x = np.arange(5)
-    y = ma5.iloc[-5:].values
-    slope, _, _, _, _ = stats.linregress(x, y)
-    
-    return slope
+        # 计算MA5
+        ma5 = prices.rolling(window=5).mean()
+        
+        # 获取最新的5个MA5值
+        latest_ma5 = ma5.tail(5).values
+        
+        # 去除NaN值
+        latest_ma5 = latest_ma5[~np.isnan(latest_ma5)]
+        
+        if len(latest_ma5) < 5:
+            return 0
+            
+        # 使用线性回归计算斜率
+        x = np.arange(len(latest_ma5))
+        slope, _ = np.polyfit(x, latest_ma5, 1)
+        
+        return slope
+        
+    except Exception as e:
+        st.error(f"计算MA5斜率时发生错误: {str(e)}")
+        return 0
 
 def calculate_rsi(prices, period=14):
     """计算RSI指标"""
@@ -72,8 +89,8 @@ def check_buy_signal(stock_data):
         volumes = stock_data['成交量']
         
         # 1. 计算5日均线斜率
-        current_slope = calculate_ma5_slope(prices)
-        previous_slope = calculate_ma5_slope(prices.shift(1))
+        current_slope = calculate_ma5_slope(stock_data)
+        previous_slope = calculate_ma5_slope(stock_data.shift(1))
         
         slope_signal = (previous_slope is not None and 
                        current_slope is not None and 
@@ -113,4 +130,54 @@ def check_buy_signal(stock_data):
         return True, "满足所有买入条件"
         
     except Exception as e:
-        return False, f"计算过程出错: {str(e)}" 
+        return False, f"计算过程出错: {str(e)}"
+
+def plot_stock_chart(stock_code, stock_data):
+    """绘制股票K线和MA5"""
+    try:
+        if stock_data is None or len(stock_data) < 5:
+            st.warning("数据不足，无法绘制图表")
+            return None
+            
+        # 确保所有价格列都是数值类型
+        numeric_columns = ['开盘', '收盘', '最高', '最低']
+        for col in numeric_columns:
+            stock_data[col] = pd.to_numeric(stock_data[col], errors='coerce')
+            
+        # 计算MA5
+        stock_data['MA5'] = stock_data['收盘'].rolling(window=5).mean()
+        
+        # 创建图表
+        fig = go.Figure()
+        
+        # 添加K线图
+        fig.add_trace(go.Candlestick(
+            x=stock_data['日期'],
+            open=stock_data['开盘'],
+            high=stock_data['最高'],
+            low=stock_data['最低'],
+            close=stock_data['收盘'],
+            name='K线'
+        ))
+        
+        # 添加MA5线
+        fig.add_trace(go.Scatter(
+            x=stock_data['日期'],
+            y=stock_data['MA5'],
+            name='MA5',
+            line=dict(color='orange', width=2)
+        ))
+        
+        # 更新布局
+        fig.update_layout(
+            title=f'{stock_code} K线图和MA5',
+            yaxis_title='价格',
+            xaxis_title='日期',
+            template='plotly_dark'
+        )
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"绘制图表时发生错误: {str(e)}")
+        return None 
