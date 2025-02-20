@@ -1,7 +1,28 @@
-streamlit
-pandas
-numpy
-plotly
-akshare
-pytz
-scikit-learn
+
+# 基础依赖
+streamlit>=1.32.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.18.0
+akshare>=1.12.0
+
+# 异步支持
+aiohttp>=3.9.0
+asyncio>=3.4.3
+
+# 数据处理
+python-dateutil>=2.8.2
+pytz>=2024.1
+
+# 图表支持
+matplotlib>=3.8.0
+
+# 工具库
+tqdm>=4.66.0
+requests>=2.31.0
+
+# 缓存支持
+cachetools>=5.3.0
+
+# 类型提示
+typing-extensions>=4.9.0
