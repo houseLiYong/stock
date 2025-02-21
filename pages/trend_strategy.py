@@ -135,9 +135,7 @@ def plot_trend_chart(stock_code, stock_data):
 def select_boards():
     """处理板块选择逻辑"""
     with st.sidebar:
-        option = st.selectbox("选择一个选项", ["选项1", "选项2", "选项3"])
-        st.write(f"你选择了：{option}")
-
+        
         st.header("板块选择")
         st.write("请选择要分析的板块：")
         
