@@ -271,57 +271,72 @@ def ma5_strategy():
         - 设置止损位置
         """)
     
+     # 初始化会话状态
+    
+    if "result_df" not in st.session_state:
+        st.session_state.result_df = None
+    if "stock_data" not in st.session_state:
+        st.session_state.stock_data = {}
+    if "selected_stock" not in st.session_state:
+        st.session_state.selected_stock = None
+
+
     # 创建选股按钮
-    if st.button("开始选股", key="ma5_start_analysis"):
-        if not selected_boards:
-            st.warning("请先在左侧边栏选择至少一个板块")
-            return
-            
+    if selected_boards and st.button("开始选股", key="trend_start_analysis"):   
         with st.spinner("正在进行MA5策略分析..."):
-            result_df = get_stock_list(selected_boards)
-            
-            if result_df is not None and not result_df.empty:
-                # 显示选股结果
-                st.write("### 选股结果")
-                st.dataframe(
-                    result_df,
-                    column_config={
-                        "代码": st.column_config.TextColumn("代码"),
-                        "名称": st.column_config.TextColumn("名称"),
-                        "板块": st.column_config.TextColumn("板块"),
-                        "现价": st.column_config.NumberColumn("现价", format="%.2f"),
-                        "涨跌幅": st.column_config.NumberColumn("涨跌幅", format="%.2f%%"),
-                        "换手率": st.column_config.NumberColumn("换手率", format="%.2f%%"),
-                        "成交额": st.column_config.NumberColumn("成交额", format="%.2f亿"),
-                        "选股理由": st.column_config.TextColumn("选股理由"),
-                    }
-                )
+            # result_df = get_stock_list(selected_boards)
+            st.session_state.result_df = get_stock_list(selected_boards)  # 只在按钮点击时计算
+    if st.session_state.result_df is not None and not st.session_state.result_df.empty:
+        # 显示选股结果
+        st.write("### 选股结果")
+        st.dataframe(
+            st.session_state.result_df,
+            column_config={
+                "代码": st.column_config.TextColumn("代码"),
+                "名称": st.column_config.TextColumn("名称"),
+                "板块": st.column_config.TextColumn("板块"),
+                "现价": st.column_config.NumberColumn("现价", format="%.2f"),
+                "涨跌幅": st.column_config.NumberColumn("涨跌幅", format="%.2f%%"),
+                "换手率": st.column_config.NumberColumn("换手率", format="%.2f%%"),
+                "成交额": st.column_config.NumberColumn("成交额", format="%.2f亿"),
+                "选股理由": st.column_config.TextColumn("选股理由"),
+            }
+        )
+        
+        # 创建股票选择器
+        selected_stock = st.selectbox(
+            "选择要查看的股票",
+            options=st.session_state.result_df['代码'].tolist(),
+            format_func=lambda x: f"{x} - {st.session_state.result_df[st.session_state.result_df['代码']==x]['名称'].iloc[0]}",
+            key="ma5_stock_selector"
+        )
+
+        # 当选择变化时更新会话状态
+        if selected_stock != st.session_state.selected_stock:
+            st.session_state.selected_stock = selected_stock
+            # 仅在股票变化时加载新数据
+            with st.spinner("正在加载股票数据..."):
+                stock_data = get_stock_data(selected_stock)
+                if stock_data is not None:
+                    st.session_state.stock_data[selected_stock] = stock_data
+
+            if st.session_state.selected_stock and st.session_state.selected_stock in st.session_state.stock_data:
+                stock_data = st.session_state.stock_data[st.session_state.selected_stock]
                 
-                # 创建股票选择器
-                selected_stock = st.selectbox(
-                    "选择要查看的股票",
-                    options=result_df['代码'].tolist(),
-                    format_func=lambda x: f"{x} - {result_df[result_df['代码']==x]['名称'].iloc[0]}",
-                    key="ma5_stock_selector"
-                )
+                # 显示MA5分析图表
+                fig = plot_stock_chart(st.session_state.selected_stock, stock_data)
+                if fig:
+                    st.plotly_chart(fig)
+                    
+                # 显示MA5斜率分析
+                slope = calculate_ma5_slope(stock_data)
+                st.write("### MA5斜率分析")
+                st.write(f"当前MA5斜率: {slope:.4f}")
                 
-                if selected_stock:
-                    stock_data = get_stock_data(selected_stock)
-                    if stock_data is not None:
-                        # 显示MA5分析图表
-                        fig = plot_stock_chart(selected_stock, stock_data)
-                        if fig:
-                            st.plotly_chart(fig)
-                            
-                        # 显示MA5斜率分析
-                        slope = calculate_ma5_slope(stock_data)
-                        st.write("### MA5斜率分析")
-                        st.write(f"当前MA5斜率: {slope:.4f}")
-                        
-                        if slope > 0:
-                            st.success("MA5斜率为正，趋势向上")
-                        else:
-                            st.warning("MA5斜率为负，趋势向下")
+                if slope > 0:
+                    st.success("MA5斜率为正，趋势向上")
+                else:
+                    st.warning("MA5斜率为负，趋势向下")
 
 if __name__ == "__main__":
     ma5_strategy() 
