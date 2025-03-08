@@ -291,6 +291,98 @@ def get_index_decline_records(start_date="2025-01-01"):
     except Exception as e:
         st.error(f"获取数据失败: {str(e)}")
         return None, None
+def get_chinext_decline_records(start_date="2025-01-01"):
+    try:
+        # 获取当前时间
+        current_time = datetime.now(pytz.timezone('Asia/Shanghai'))
+        end_date = current_time.strftime('%Y-%m-%d')
+        
+        # 获取历史数据
+        hist_data = ak.index_zh_a_hist(
+            symbol="399006", # 创业板指数代码
+            period="daily", 
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        # 打印原始数据
+        with st.expander("创业板指数原始数据"):
+            st.write("原始数据形状:", hist_data.shape)
+            st.write("原始数据列名:", hist_data.columns.tolist())
+            st.dataframe(hist_data, height=400, use_container_width=True)
+        
+        # 确保日期列是datetime类型
+        hist_data['日期'] = pd.to_datetime(hist_data['日期'])
+        
+        # 计算涨跌幅
+        hist_data['前日收盘'] = hist_data['收盘'].shift(1)
+        hist_data['涨跌幅'] = ((hist_data['收盘'] - hist_data['前日收盘']) / hist_data['前日收盘'] * 100)
+        
+        # 打印涨跌幅计算后的数据
+        with st.expander("创业板指数涨跌幅计算后的数据"):
+            st.write("涨跌幅数据形状:", hist_data.shape)
+            st.write("涨跌幅范围:", f"最小值: {hist_data['涨跌幅'].min():.2f}%, 最大值: {hist_data['涨跌幅'].max():.2f}%")
+            styled_hist = hist_data.style.format({
+                '涨跌幅': '{:.2f}%',
+                '收盘': '{:.2f}',
+                '成交量': '{:.2f}',
+                '成交额': '{:.2f}'
+            }).applymap(
+                lambda x: 'color: red' if x > 0 else 'color: green' if x < 0 else '',
+                subset=['涨跌幅']
+            )
+            st.dataframe(styled_hist, height=400, use_container_width=True)
+        
+        # 筛选涨跌幅绝对值大于1%的记录
+        volatility_records = hist_data[abs(hist_data['涨跌幅']) > 1].copy()
+        
+        # 打印筛选后的数据
+        with st.expander("创业板指数筛选后的数据（涨跌幅绝对值>1%）"):
+            st.write("筛选后数据形状:", volatility_records.shape)
+            styled_volatility = volatility_records.style.format({
+                '涨跌幅': '{:.2f}%',
+                '收盘': '{:.2f}',
+                '成交量': '{:.2f}',
+                '成交额': '{:.2f}'
+            }).applymap(
+                lambda x: 'color: red' if x > 0 else 'color: green' if x < 0 else '',
+                subset=['涨跌幅']
+            )
+            st.dataframe(styled_volatility, height=400, use_container_width=True)
+        
+        # 格式化数据
+        volatility_records = volatility_records.reset_index(drop=True)
+        volatility_records['日期'] = volatility_records['日期'].dt.strftime('%Y-%m-%d')
+        volatility_records['涨跌幅'] = volatility_records['涨跌幅'].round(2)
+        volatility_records['收盘价'] = volatility_records['收盘'].round(2)
+        volatility_records['成交量'] = (volatility_records['成交量'] / 10000).round(2)
+        volatility_records['成交额'] = (volatility_records['成交额'] / 100000000).round(2)
+        
+        # 选择需要显示的列并按日期降序排序
+        result = volatility_records[[
+            '日期', '收盘价', '涨跌幅', '成交量', '成交额'
+        ]].rename(columns={
+            '成交量': '成交量(万手)',
+            '成交额': '成交额(亿)'
+        }).sort_values('日期', ascending=False)
+        
+        if len(result) > 0:
+            stats = {
+                'count': len(result),
+                'up_count': len(result[result['涨跌幅'] > 1]),
+                'down_count': len(result[result['涨跌幅'] < -1]),
+                'max_up': result['涨跌幅'].max(),
+                'max_down': result['涨跌幅'].min(),
+                'recent': result.iloc[0]['日期'],
+                'max_volume': result['成交量(万手)'].max()
+            }
+            return result, stats
+        
+        return None, None
+        
+    except Exception as e:
+        st.error(f"获取创业板指数数据失败: {str(e)}")
+        return None, None
 
 def write_changelog():
     """创建版本记录文件"""
@@ -435,6 +527,51 @@ def main():
     else:
         st.warning("暂无涨跌幅超过1%的记录")
 
+     # 显示跌幅统计
+        # 显示创业板指数跌幅统计
+    st.header("创业板指数跌幅统计")
+    st.caption("2025年1月1日至今跌幅超过1%的交易日")
+    
+    chinext_data, chinext_stats = get_chinext_decline_records()
+    if chinext_data is not None and not chinext_data.empty and chinext_stats is not None:
+        # 使用 styler 来设置表格样式，根据涨跌幅设置不同颜色
+        styled_df = chinext_data.style.format({
+            '涨跌幅': '{:.2f}%',
+            '收盘价': '{:.2f}',
+            '成交量(万手)': '{:.2f}',
+            '成交额(亿)': '{:.2f}'
+        }).applymap(
+            lambda x: 'color: red' if x > 1 else 'color: green' if x < -1 else '',
+            subset=['涨跌幅']
+        )
+        
+        # 显示统计信息
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("上涨天数(>1%)", f"{chinext_stats['up_count']}天")
+        with col2:
+            st.metric("下跌天数(<-1%)", f"{chinext_stats['down_count']}天")
+        with col3:
+            st.metric("波动天数总计", f"{chinext_stats['count']}天")
+        
+        # 显示数据表格
+        st.dataframe(
+            styled_df,
+            height=400,
+            use_container_width=True
+        )
+        
+        # 显示详细统计信息
+        st.info(f"""
+        详细统计：
+        - 统计区间：2025-01-01 至 {datetime.now().strftime('%Y-%m-%d')}
+        - 最大涨幅：{chinext_stats['max_up']:.2f}%
+        - 最大跌幅：{chinext_stats['max_down']:.2f}%
+        - 最近波动日期：{chinext_stats['recent']}
+        - 期间最大成交量：{chinext_stats['max_volume']:.2f}万手
+        """)
+    else:
+        st.warning("暂无创业板指数涨跌幅超过1%的记录")
     # 添加上证指数信息显示
     st.sidebar.header("上证指数信息")
     
