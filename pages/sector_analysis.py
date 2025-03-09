@@ -4,7 +4,7 @@ import numpy as np
 import akshare as ak
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import os
 import time
@@ -35,18 +35,14 @@ def get_sector_list():
     try:
         # 获取东方财富行业板块列表
         sector_df = ak.stock_board_industry_name_em()
-        st.write(sector_df)
         return sector_df
     except Exception as e:
         st.error(f"获取板块列表失败: {str(e)}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
-def get_sector_history(index_code, start_date="20210101", end_date=None):
+def get_sector_history(index_code, start_date, end_date):
     """获取板块历史数据"""
-    if end_date is None:
-        end_date = datetime.now().strftime("%Y%m%d")
-    
     try:
         # 获取东方财富行业板块历史数据
         st.info(f"正在获取板块 {index_code} 的历史数据...")
@@ -96,24 +92,113 @@ def get_stock_history(stock_code, start_date="20210101", end_date=None):
 
 @st.cache_data(ttl=3600)
 def get_funds_by_sector(sector_name):
-    """获取与板块相关的基金（基础版）"""
+    """获取与板块相关的基金（优化关键词版）"""
     try:
         # 获取所有基金
         funds = ak.fund_open_fund_rank_em()
         
+        # 行业关键词映射表 - 将板块名称映射到更精确的基金关键词
+        industry_mapping = {
+            "电子": ["电子", "芯片", "半导体"],
+            "医药": ["医药", "医疗", "生物", "医药生物", "医疗器械", "创新药"],
+            "食品饮料": ["食品", "饮料", "消费", "白酒"],
+            "银行": ["银行", "金融"],
+            "计算机": ["计算机", "软件", "信息技术", "IT", "互联网", "人工智能", "云计算"],
+            "通信": ["通信", "5G", "移动互联"],
+            "汽车": ["汽车", "新能源车", "汽车零部件"],
+            "电气设备": ["电气", "设备", "输配电", "电力设备"],
+            "机械设备": ["机械", "工业", "装备", "制造"],
+            "建筑材料": ["建材", "建筑", "水泥", "装饰"],
+            "农林牧渔": ["农业", "农林", "牧渔", "养殖"],
+            "基础化工": ["化工", "化学", "材料"],
+            "房地产": ["地产", "房地产", "物业"],
+            "钢铁": ["钢铁", "金属", "有色", "钢材"],
+            "家用电器": ["家电", "消费电子", "智能家居"],
+            "商贸零售": ["商贸", "零售", "商业", "电商"],
+            "纺织服装": ["纺织", "服装", "服饰", "纺织品"],
+            "传媒": ["传媒", "文化", "娱乐", "影视"],
+            "国防军工": ["军工", "国防", "航空", "航天"],
+            "煤炭": ["煤炭", "能源", "矿业"],
+            "美容护理": ["美容", "护理", "化妆品"],
+            "电力": ["电力", "公用事业", "火电", "水电"],
+            "非银金融": ["证券", "保险", "多元金融"],
+            "有色金属": ["有色", "贵金属", "稀有金属", "铜", "金", "铝"],
+            "交通运输": ["交通", "运输", "港口", "航运", "铁路", "公路", "物流"],
+            "光伏": ["光伏", "太阳能", "新能源"], 
+            "风电": ["风电", "风能"],
+            "新能源车": ["新能源汽车", "电动车", "汽车新能源"],
+            "半导体": ["半导体", "集成电路", "芯片"],
+            "新能源": ["新能源", "氢能", "储能", "光伏", "风电"]
+        }
+        
         # 清理板块名称
-        keywords = sector_name.replace("板块", "").replace("概念", "").replace("指数", "")
+        clean_sector = sector_name.replace("板块", "").replace("概念", "").replace("指数", "").replace("行业", "")
         
-        # 在基金名称中搜索关键词
-        matched_funds = funds[funds['基金简称'].str.contains(keywords)]
+        # 寻找最匹配的行业类别
+        matched_keywords = []
         
-        if matched_funds.empty:
-            # 尝试搜索更短的关键词
-            if len(keywords) > 2:
-                shorter_keyword = keywords[:2]  # 取前两个字符
-                matched_funds = funds[funds['基金简称'].str.contains(shorter_keyword)]
+        # 1. 直接在映射表中查找完全匹配
+        for industry, keywords in industry_mapping.items():
+            if clean_sector == industry:
+                matched_keywords = keywords
+                break
         
-        return matched_funds
+        # 2. 如果没有完全匹配，尝试部分匹配
+        if not matched_keywords:
+            for industry, keywords in industry_mapping.items():
+                if industry in clean_sector or clean_sector in industry:
+                    matched_keywords = keywords
+                    break
+        
+        # 3. 如果仍未匹配，尝试关键词部分匹配
+        if not matched_keywords:
+            for industry, keywords in industry_mapping.items():
+                for keyword in keywords:
+                    if keyword in clean_sector or clean_sector in keyword:
+                        matched_keywords = keywords
+                        break
+                if matched_keywords:
+                    break
+        
+        # 4. 如果上述都未匹配，则使用原始板块名称作为关键词
+        if not matched_keywords:
+            matched_keywords = [clean_sector]
+            # 如果超过3个字符，也添加前2个字符作为辅助关键词
+            if len(clean_sector) > 2:
+                matched_keywords.append(clean_sector[:2])
+        
+        # 记录搜索关键词
+        st.write(f"搜索关键词: {matched_keywords}")
+        
+        # 使用所有匹配的关键词搜索基金
+        result_funds = pd.DataFrame()
+        for keyword in matched_keywords:
+            # 防止关键词太短导致过度匹配
+            if len(keyword) >= 2:
+                # 在基金名称和基金简称中搜索
+                matched = funds[funds['基金简称'].str.contains(keyword)]
+                if not matched.empty:
+                    if result_funds.empty:
+                        result_funds = matched
+                    else:
+                        result_funds = pd.concat([result_funds, matched])
+        
+        # 去重
+        if not result_funds.empty:
+            result_funds = result_funds.drop_duplicates(subset=['基金代码'])
+        
+        # 如果结果太多（>30），尝试使用更严格的匹配条件
+        if len(result_funds) > 30:
+            strict_results = pd.DataFrame()
+            # 使用第一个关键词（通常是最主要的）进行更严格的匹配
+            primary_keyword = matched_keywords[0]
+            strict_results = funds[funds['基金简称'].str.contains(primary_keyword)]
+            
+            # 如果严格匹配有结果且数量合理，使用严格匹配结果
+            if not strict_results.empty and len(strict_results) < 30:
+                result_funds = strict_results
+        
+        return result_funds
     except Exception as e:
         st.error(f"获取板块相关基金失败: {str(e)}")
         return pd.DataFrame()
@@ -153,7 +238,7 @@ def analyze_sector_funds(sector_name):
         st.error(f"分析板块相关基金失败: {str(e)}")
         return None
 
-def calculate_sector_performance(sector_df):
+def calculate_sector_performance(sector_df, start_date, end_date):
     """计算板块表现"""
     results = []
     
@@ -172,7 +257,7 @@ def calculate_sector_performance(sector_df):
                 continue
                 
             # 使用板块名称获取历史数据
-            hist_data = get_sector_history(sector_name)
+            hist_data = get_sector_history(sector_name, start_date, end_date)
             
             if hist_data.empty:
                 st.warning(f"板块 {sector_name} 没有历史数据，跳过")
@@ -310,97 +395,153 @@ def plot_sector_performance(sector_df):
     return fig
 
 def sector_analysis():
+    """板块分析主函数"""
+    st.title("A股板块分析")
     
-    st.title("📊 A股板块分析")
-    st.subheader("行业板块表现分析 (2021年至今)")
+    # 日期选择器
+    col1, col2 = st.columns(2)
+    with col1:
+        # 默认起始日期为一年前
+        default_start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        start_date = st.date_input(
+            "起始日期", 
+            value=datetime.strptime(default_start_date, "%Y-%m-%d"),
+            min_value=datetime(2015, 1, 1),
+            max_value=datetime.now() - timedelta(days=1)
+        )
+    with col2:
+        end_date = st.date_input(
+            "结束日期", 
+            value=datetime.now(),
+            min_value=datetime(2015, 1, 1),
+            max_value=datetime.now()
+        )
+    
+    # 转换日期格式
+    start_date_str = start_date.strftime("%Y%m%d")
+    end_date_str = end_date.strftime("%Y%m%d")
+    
+    # 验证日期范围
+    if start_date >= end_date:
+        st.error("起始日期必须早于结束日期")
+        return
+    
+    # 介绍性文字
+    date_range_text = f"{start_date.strftime('%Y年%m月%d日')} 至 {end_date.strftime('%Y年%m月%d日')}"
+    st.markdown(f"### 分析时间范围: {date_range_text}")
+    st.markdown("本页面分析A股各个行业板块的表现，展示涨跌幅排行，并提供成分股和相关基金分析。")
     
     # 获取板块列表
-    with st.spinner("正在获取板块数据..."):
-        sector_df = get_sector_list()
+    sectors = get_sector_list()
     
-    if sector_df.empty:
-        st.error("获取板块数据失败")
+    if sectors.empty:
+        st.error("无法获取板块列表数据")
         return
     
     # 计算板块表现
-    performance_df = calculate_sector_performance(sector_df)
+    with st.expander("板块涨跌幅排行", expanded=True):
+        performance = calculate_sector_performance(sectors, start_date_str, end_date_str)
+        
+        if performance.empty:
+            st.error("无法计算板块表现")
+            return
+        
+        # 显示板块表现
+        st.dataframe(
+            performance.style.format({
+                '涨跌幅(%)': '{:.2f}',
+                '起始价格': '{:.2f}',
+                '最新价格': '{:.2f}'
+            }).background_gradient(
+                cmap='RdYlGn',
+                subset=['涨跌幅(%)']
+            ),
+            height=400,
+            use_container_width=True
+        )
+        
+        # 可视化前20个板块
+        fig = px.bar(
+            performance.head(20),
+            y='板块名称',
+            x='涨跌幅(%)',
+            orientation='h',
+            title=f"行业板块涨跌幅排行 (TOP 20) - {date_range_text}",
+            color='涨跌幅(%)',
+            color_continuous_scale='RdYlGn',
+            text='涨跌幅(%)'
+        )
+        
+        fig.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+        fig.update_layout(height=600)
+        st.plotly_chart(fig, use_container_width=True)
     
-    # 展示板块表现图表
-    fig = plot_sector_performance(performance_df)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # 展示板块表现表格
-    st.subheader("板块表现排名")
-    st.dataframe(
-        performance_df.style.format({
-            '涨跌幅(%)': '{:.2f}',
-            '起始价格': '{:.2f}',
-            '最新价格': '{:.2f}'
-        }).bar(
-            subset=['涨跌幅(%)'],
-            color=['#d65f5f', '#5fba7d']
-        ),
-        height=400,
-        use_container_width=True
-    )
-    
-    # 选择要查看详情的板块
-    selected_sector = st.selectbox(
-        "选择板块查看详情:",
-        performance_df['板块名称'].tolist()
-    )
+    # 板块详细分析
+    st.subheader("板块详细分析")
+    selected_sector = st.selectbox("选择板块", performance['板块名称'].tolist())
     
     if selected_sector:
-        sector_info = performance_df[performance_df['板块名称'] == selected_sector].iloc[0]
-        sector_code = sector_info['板块代码']
+        # 显示板块概况
+        sector_info = performance[performance['板块名称'] == selected_sector].iloc[0]
+        st.markdown(f"#### {selected_sector} 概况")
         
-        st.header(f"{selected_sector} 详细分析")
-        
-        # 显示板块基本信息
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("板块代码", sector_code)
+            st.metric("涨跌幅", f"{sector_info['涨跌幅(%)']}%")
         with col2:
-            st.metric("成分股数量", sector_info['成分股数量'])
+            st.metric("起始价格", f"{sector_info['起始价格']}")
         with col3:
-            st.metric("总涨跌幅", f"{sector_info['涨跌幅(%)']}%")
+            st.metric("最新价格", f"{sector_info['最新价格']}")
+        with col4:
+            st.metric("成分股数量", f"{sector_info['成分股数量']}")
         
         # 分析板块成分股
-        weight_df, performance_df = analyze_sector_stocks(sector_code, selected_sector)
+        weight_df, performance_df = analyze_sector_stocks(
+            sector_info['板块代码'] if '板块代码' in sector_info else None,
+            selected_sector,
+            start_date_str
+        )
         
-        if weight_df is not None and performance_df is not None:
-            # 展示权重最大的10只股票
-            st.subheader(f"{selected_sector} 权重最大的10只股票")
-            st.dataframe(
-                weight_df.style.format({
-                    '权重(%)': '{:.2f}',
-                    '涨跌幅(%)': '{:.2f}',
-                    '起始价格': '{:.2f}',
-                    '最新价格': '{:.2f}'
-                }).bar(
-                    subset=['涨跌幅(%)'],
-                    color=['#d65f5f', '#5fba7d']
-                ),
-                height=400,
-                use_container_width=True
-            )
-            
-            # 展示涨跌幅最大的10只股票
-            st.subheader(f"{selected_sector} 涨跌幅所有股票")
-            st.dataframe(
-                performance_df.style.format({
-                    '权重(%)': '{:.2f}',
-                    '涨跌幅(%)': '{:.2f}',
-                    '起始价格': '{:.2f}',
-                    '最新价格': '{:.2f}'
-                }).bar(
-                    subset=['涨跌幅(%)'],
-                    color=['#d65f5f', '#5fba7d']
-                ),
-                height=400,
-                use_container_width=True
-            )
+        col1, col2 = st.columns(2)
         
+        with col1:
+            st.markdown(f"#### {selected_sector} 权重最大的股票")
+            if weight_df is not None and not weight_df.empty:
+                st.dataframe(
+                    weight_df.style.format({
+                        '权重(%)': '{:.2f}',
+                        '起始价格': '{:.2f}',
+                        '最新价格': '{:.2f}',
+                        '涨跌幅(%)': '{:.2f}'
+                    }).background_gradient(
+                        cmap='RdYlGn',
+                        subset=['涨跌幅(%)']
+                    ),
+                    height=400,
+                    use_container_width=True
+                )
+            else:
+                st.info(f"未找到 {selected_sector} 的权重信息")
+        
+        with col2:
+            st.markdown(f"#### {selected_sector} 涨跌幅最大的股票")
+            if performance_df is not None and not performance_df.empty:
+                st.dataframe(
+                    performance_df.style.format({
+                        '权重(%)': '{:.2f}',
+                        '起始价格': '{:.2f}',
+                        '最新价格': '{:.2f}',
+                        '涨跌幅(%)': '{:.2f}'
+                    }).background_gradient(
+                        cmap='RdYlGn',
+                        subset=['涨跌幅(%)']
+                    ),
+                    height=400,
+                    use_container_width=True
+                )
+            else:
+                st.info(f"未找到 {selected_sector} 的涨跌幅信息")
+                
         # 分析板块相关基金
         funds_df = analyze_sector_funds(selected_sector)
         
