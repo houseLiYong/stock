@@ -647,9 +647,6 @@ def main():
                 else:
                     st.error(f"生成版本记录失败：{message}")
             
-            # 添加策略链接
-            st.markdown("### 量化策略")
-           
 
         # 创建计算器实例
         calculator = InvestmentCalculator(initial_capital)
