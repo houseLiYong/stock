@@ -307,7 +307,7 @@ def analyze_sector_stocks(sector_code, sector_name, start_date="20210101"):
     try:
         # 获取成分股
         stocks = get_sector_stocks(sector_name)  # 使用板块名称
-        
+        st.write(stocks)
         if stocks.empty:
             st.warning(f"未找到 {sector_name} 的成分股")
             return None, None
@@ -325,7 +325,6 @@ def analyze_sector_stocks(sector_code, sector_name, start_date="20210101"):
                 
                 stock_code = stock.代码 if hasattr(stock, '代码') else None
                 stock_name = stock.名称 if hasattr(stock, '名称') else None
-                stock_weight = stock.权重 if hasattr(stock, '权重') else 0
                 
                 if not stock_code:
                     continue
@@ -345,7 +344,6 @@ def analyze_sector_stocks(sector_code, sector_name, start_date="20210101"):
                 stock_results.append({
                     '股票代码': stock_code,
                     '股票名称': stock_name,
-                    '权重(%)': stock_weight,
                     '起始价格': first_close,
                     '最新价格': last_close,
                     '涨跌幅(%)': round(change_pct, 2)
@@ -358,13 +356,10 @@ def analyze_sector_stocks(sector_code, sector_name, start_date="20210101"):
         if stock_df.empty:
             return None, None
         
-        # 按权重排序
-        weight_df = stock_df.sort_values('权重(%)', ascending=False).head(10)
-        
         # 按涨跌幅排序
         performance_df = stock_df.sort_values('涨跌幅(%)', ascending=False)
         
-        return weight_df, performance_df
+        return  performance_df
     
     except Exception as e:
         st.error(f"分析板块成分股失败: {str(e)}")
@@ -496,39 +491,19 @@ def sector_analysis():
             st.metric("成分股数量", f"{sector_info['成分股数量']}")
         
         # 分析板块成分股
-        weight_df, performance_df = analyze_sector_stocks(
+        performance_df = analyze_sector_stocks(
             sector_info['板块代码'] if '板块代码' in sector_info else None,
             selected_sector,
             start_date_str
         )
         
-        col1, col2 = st.columns(2)
+        col1, = st.columns(1)
         
         with col1:
-            st.markdown(f"#### {selected_sector} 权重最大的股票")
-            if weight_df is not None and not weight_df.empty:
-                st.dataframe(
-                    weight_df.style.format({
-                        '权重(%)': '{:.2f}',
-                        '起始价格': '{:.2f}',
-                        '最新价格': '{:.2f}',
-                        '涨跌幅(%)': '{:.2f}'
-                    }).background_gradient(
-                        cmap='RdYlGn',
-                        subset=['涨跌幅(%)']
-                    ),
-                    height=400,
-                    use_container_width=True
-                )
-            else:
-                st.info(f"未找到 {selected_sector} 的权重信息")
-        
-        with col2:
             st.markdown(f"#### {selected_sector} 涨跌幅最大的股票")
             if performance_df is not None and not performance_df.empty:
                 st.dataframe(
                     performance_df.style.format({
-                        '权重(%)': '{:.2f}',
                         '起始价格': '{:.2f}',
                         '最新价格': '{:.2f}',
                         '涨跌幅(%)': '{:.2f}'
