@@ -4,6 +4,10 @@ pandas>=2.0.0
 numpy>=1.24.0
 plotly>=5.18.0
 akshare>=1.12.0
+tushare
+baostock
+pytdx
+requests>=2.31.0
 
 # 科学计算
 scipy>=1.12.0  # 添加 scipy 依赖
@@ -21,7 +25,6 @@ matplotlib>=3.8.0
 
 # 工具库
 tqdm>=4.66.0
-requests>=2.31.0
 
 # 缓存支持
 cachetools>=5.3.0
