@@ -7,8 +7,6 @@ import akshare as ak
 import pytz
 import time
 import os
-from streamlit.runtime.scriptrunner import get_script_run_ctx
-from streamlit.source_util import get_pages
 
 
 class InvestmentCalculator:
