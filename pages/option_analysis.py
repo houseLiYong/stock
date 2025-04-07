@@ -9,7 +9,6 @@ import os
 import akshare as ak
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import efinance as ef
 import requests
 import json
 import tushare as ts
